@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require("../lib/prisma");
+const authenticate = require("../middleware/auth");
+const isOwner = require("../middleware/isOwner");
 
-// 1. GET all questions 
+router.use(authenticate);
+
 router.get('/', async (req, res) => {
   try {
     const search = req.query.search;
@@ -25,7 +28,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. GET a specific question
 router.get('/:qId', async (req, res) => {
   try {
     const id = parseInt(req.params.qId);
@@ -42,7 +44,6 @@ router.get('/:qId', async (req, res) => {
   }
 });
 
-// 3. POST a new question
 router.post('/', async (req, res) => {
   try {
     const { question, answer } = req.body;
@@ -50,11 +51,11 @@ router.post('/', async (req, res) => {
     if (!question || !answer) {
       return res.status(400).json({ message: "Question and answer are required!" });
     }
-
     const newQuestion = await prisma.question.create({
       data: {
         question: question,
-        answer: answer
+        answer: answer,
+        userId: req.user.userId 
       }
     });
 
@@ -64,33 +65,29 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 4. PUT a question (edit)
-router.put('/:qId', async (req, res) => {
+router.put('/:qId', isOwner, async (req, res) => {
   try {
     const id = parseInt(req.params.qId);
     const { question, answer } = req.body;
     
-    // Prisma will throw an error if we try to update a record that doesn't exist, 
-    // so we catch it and return a 404
     const updatedQuestion = await prisma.question.update({
       where: { id: id },
       data: {
-        ...(question && { question }), // only update if provided
+        ...(question && { question }), 
         ...(answer && { answer })
       }
     });
 
     res.json(updatedQuestion);
   } catch (error) {
-    if (error.code === 'P2025') { // Prisma error code for 'Record not found'
+    if (error.code === 'P2025') { 
       return res.status(404).json({ message: "Question not found" });
     }
     res.status(500).json({ message: "Error updating question." });
   }
 });
 
-// 5. DELETE a question
-router.delete('/:qId', async (req, res) => {
+router.delete('/:qId', isOwner, async (req, res) => {
   try {
     const id = parseInt(req.params.qId);
     
