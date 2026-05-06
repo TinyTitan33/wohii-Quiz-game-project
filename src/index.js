@@ -1,5 +1,5 @@
 const express = require('express');
-const path = require('path');
+const path = require('path'); 
 const questionsRouter = require('./routes/questions');
 const authRouter = require('./routes/auth'); // Added the auth router
 const prisma = require('./lib/prisma');
@@ -8,7 +8,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api/auth', authRouter);

@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const multer = require('multer');
 const prisma = require("../lib/prisma");
 const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
-const multer = require("multer");
-const path = require("path");
 
 const storage = multer.diskStorage({
   destination: path.join(__dirname, "..", "..", "public", "uploads"),
@@ -27,8 +27,8 @@ function formatQuestion(question) {
   return {
     ...question,
     userName: question.user?.name || null,
-    solved: question.attempts ? question.attempts.length > 0 : false,
-    user: undefined,
+    solved: question.attempts ? question.attempts.some(a => a.correct) : false,
+    user: undefined, 
     attempts: undefined,
   };
 }
@@ -44,12 +44,12 @@ router.get('/', async (req, res) => {
 
     const where = search ? { question: { contains: search } } : {};
 
-    const [filteredQuestions, total] = await Promise.all([
+    const [questions, total] = await Promise.all([
       prisma.question.findMany({
         where,
         include: { 
           user: true,
-          attempts: { where: { userId: req.user.userId, correct: true }, take: 1 } 
+          attempts: { where: { userId: req.user.userId } }
         },
         orderBy: { id: "asc" },
         skip,
@@ -59,7 +59,7 @@ router.get('/', async (req, res) => {
     ]);
 
     res.json({
-      data: filteredQuestions.map(formatQuestion),
+      data: questions.map(formatQuestion),
       page,
       limit,
       total,
@@ -77,7 +77,7 @@ router.get('/:qId', async (req, res) => {
       where: { id: id },
       include: { 
         user: true,
-        attempts: { where: { userId: req.user.userId, correct: true }, take: 1 }
+        attempts: { where: { userId: req.user.userId } }
       }
     });
     
@@ -104,7 +104,7 @@ router.post('/', upload.single("image"), async (req, res) => {
       data: {
         question: question,
         answer: answer,
-        imageUrl,
+        imageUrl: imageUrl,
         userId: req.user.userId 
       }
     });
@@ -115,8 +115,7 @@ router.post('/', upload.single("image"), async (req, res) => {
   }
 });
 
-// PUT question 
-router.put('/:qId', upload.single("image"), isOwner, async (req, res) => {
+router.put('/:qId', isOwner, upload.single("image"), async (req, res) => {
   try {
     const id = parseInt(req.params.qId);
     const { question, answer } = req.body;
@@ -124,11 +123,11 @@ router.put('/:qId', upload.single("image"), isOwner, async (req, res) => {
     const data = {};
     if (question) data.question = question;
     if (answer) data.answer = answer;
-    if (req.file) data.imageUrl = `/uploads/${req.file.filename}`;
+    if (req.file) data.imageUrl = `/uploads/${req.file.filename}`; 
     
     const updatedQuestion = await prisma.question.update({
       where: { id: id },
-      data
+      data: data
     });
 
     res.json(updatedQuestion);
@@ -140,7 +139,6 @@ router.put('/:qId', upload.single("image"), isOwner, async (req, res) => {
   }
 });
 
-// Delete question
 router.delete('/:qId', isOwner, async (req, res) => {
   try {
     const id = parseInt(req.params.qId);
@@ -158,25 +156,32 @@ router.delete('/:qId', isOwner, async (req, res) => {
   }
 });
 
-// POST question
 router.post('/:qId/play', async (req, res) => {
   try {
-    const id = parseInt(req.params.qId);
-    const { answer } = req.body; 
+    const questionId = parseInt(req.params.qId);
+    const { submittedAnswer } = req.body;
 
-    const question = await prisma.question.findUnique({ where: { id: id } });
+    if (!submittedAnswer) {
+      return res.status(400).json({ message: "A submittedAnswer is required!" });
+    }
+
+    const question = await prisma.question.findUnique({
+      where: { id: questionId }
+    });
+
     if (!question) {
       return res.status(404).json({ message: "Question not found" });
     }
 
-    const isCorrect = question.answer.trim().toLowerCase() === (answer || "").trim().toLowerCase();
+    const isCorrect = submittedAnswer.trim().toLowerCase() === question.answer.trim().toLowerCase();
 
     const attempt = await prisma.attempt.create({
       data: {
-        userId: req.user.userId,
-        questionId: id,
         correct: isCorrect,
-        submittedAnswer: answer || ""
+        submittedAnswer: submittedAnswer,
+        correctAnswer: question.answer,
+        userId: req.user.userId,
+        questionId: questionId
       }
     });
 
@@ -184,18 +189,19 @@ router.post('/:qId/play', async (req, res) => {
       id: attempt.id,
       correct: attempt.correct,
       submittedAnswer: attempt.submittedAnswer,
-      correctAnswer: question.answer,
+      correctAnswer: attempt.correctAnswer,
       createdAt: attempt.createdAt
     });
+    
   } catch (error) {
-    res.status(500).json({ message: "Error submitting attempt." });
+    console.error(error);
+    res.status(500).json({ message: "Error processing quiz attempt." });
   }
 });
 
-// Multer error handling middleware
 router.use((err, req, res, next) => {
   if (err instanceof multer.MulterError || err?.message === "Only image files are allowed") {
-      return res.status(400).json({ msg: err.message });
+      return res.status(400).json({ message: err.message });
   }
   next(err);
 });
