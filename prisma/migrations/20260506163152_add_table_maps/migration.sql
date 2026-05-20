@@ -18,7 +18,7 @@ ALTER TABLE `likes` DROP FOREIGN KEY `likes_questionId_fkey`;
 ALTER TABLE `likes` DROP FOREIGN KEY `likes_userId_fkey`;
 
 -- DropForeignKey
-ALTER TABLE `question` DROP FOREIGN KEY `Question_userId_fkey`;
+ALTER TABLE `Question` DROP FOREIGN KEY `Question_userId_fkey`;
 
 -- DropIndex
 DROP INDEX `attempts_questionId_fkey` ON `attempts`;
@@ -30,10 +30,10 @@ DROP INDEX `attempts_userId_fkey` ON `attempts`;
 DROP INDEX `likes_questionId_fkey` ON `likes`;
 
 -- DropTable
-DROP TABLE `question`;
+DROP TABLE `Question`;
 
 -- DropTable
-DROP TABLE `user`;
+DROP TABLE `User`;
 
 -- CreateTable
 CREATE TABLE `users` (
