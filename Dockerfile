@@ -3,7 +3,7 @@ FROM node:22
 WORKDIR /app
 
 ARG DATABASE_URL="mysql://dummy:dummy@localhost:3306/dummy"
-ENV DATABASE_URL=$DATABASE_URL
+
 COPY package*.json ./
 RUN npm install
 
