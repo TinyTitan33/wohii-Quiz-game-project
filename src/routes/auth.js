@@ -25,7 +25,7 @@ router.post("/register", async (req, res) => {
     data: { email, password: hashedPassword, name },
   });
 
-  const token = jwt.sign({ userId: user.id }, SECRET, { expiresIn: "1h" });
+  const token = jwt.sign({ userId: user.id, role: user.role }, SECRET, { expiresIn: "1h" });
 
   res.status(201).json({
     message: "User registered successfully",
@@ -45,14 +45,37 @@ router.post("/login", async (req, res) => {
     throw new UnauthorizedError("Invalid credentials");
   }
 
-  const isValid = await bcrypt.compare(password, user.password);
-  if (!isValid) {
+  const validPassword = await bcrypt.compare(password, user.password);
+  if (!validPassword) {
     throw new UnauthorizedError("Invalid credentials");
   }
 
-  const token = jwt.sign({ userId: user.id }, SECRET, { expiresIn: "1h" });
+  const token = jwt.sign({ userId: user.id, role: user.role }, SECRET, { expiresIn: "1h" });
 
-  res.json({ token });
+  res.json({
+    message: "Logged in successfully",
+    token,
+  });
+});
+
+router.get("/leaderboard", async (req, res) => {
+  const users = await prisma.user.findMany({
+    include: {
+      attempts: {
+        where: { correct: true }
+      }
+    }
+  });
+
+  const leaderboard = users.map(user => ({
+    id: user.id,
+    name: user.name,
+    successfulAttempts: user.attempts.length
+  }))
+  .sort((a, b) => b.successfulAttempts - a.successfulAttempts)
+  .slice(0, 5);
+
+  res.json(leaderboard);
 });
 
 module.exports = router;

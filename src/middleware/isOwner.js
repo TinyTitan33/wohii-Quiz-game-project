@@ -2,6 +2,10 @@ const prisma = require("../lib/prisma");
 const { NotFoundError, ForbiddenError } = require("../lib/errors");
 
 async function isOwner(req, res, next) {
+  if (req.user.role === "admin") {
+    return next();
+  }
+
   const id = parseInt(req.params.qId);
   const question = await prisma.question.findUnique({
     where: { id }

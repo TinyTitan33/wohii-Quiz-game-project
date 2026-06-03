@@ -6,7 +6,7 @@ const { z } = require('zod');
 const prisma = require("../lib/prisma");
 const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
-const { NotFoundError, ValidationError } = require("../lib/errors");
+const { NotFoundError, ValidationError, ForbiddenError } = require("../lib/errors");
 
 const storage = multer.diskStorage({
   destination: path.join(__dirname, "..", "..", "public", "uploads"),
@@ -27,45 +27,35 @@ const upload = multer({
 
 const QuestionInput = z.object({
   question: z.string().min(1),
-  answer: z.string().min(1)
+  answer: z.string().min(1),
+  difficulty: z.string().min(1).optional().default("medium")
 });
 
 const QuestionUpdateInput = z.object({
   question: z.string().min(1).optional(),
-  answer: z.string().min(1).optional()
+  answer: z.string().min(1).optional(),
+  difficulty: z.string().min(1).optional()
 });
 
 const PlayInput = z.object({
   submittedAnswer: z.string().min(1)
 });
 
-function formatQuestion(question) {
-  return {
-    ...question,
-    userName: question.user?.name || null,
-    solved: question.attempts ? question.attempts.some(a => a.correct) : false,
-    user: undefined, 
-    attempts: undefined,
-  };
-}
-
-router.use(authenticate);
-
 router.get('/', async (req, res) => {
   const search = req.query.search;
+  const difficulty = req.query.difficulty;
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 5));
   const skip = (page - 1) * limit;
 
-  const where = search ? { question: { contains: search } } : {};
+  const where = {};
+  if (search) where.question = { contains: search };
+  if (difficulty) where.difficulty = String(difficulty);
 
   const [questions, total] = await Promise.all([
     prisma.question.findMany({
       where,
-      include: { 
-        user: true,
-        attempts: { where: { userId: req.user.userId } }
-      },
+      include: { user: true },
       orderBy: { id: "asc" },
       skip,
       take: limit,
@@ -74,7 +64,11 @@ router.get('/', async (req, res) => {
   ]);
 
   res.json({
-    data: questions.map(formatQuestion),
+    data: questions.map(q => ({
+      ...q,
+      userName: q.user?.name || null,
+      user: undefined
+    })),
     page,
     limit,
     total,
@@ -82,31 +76,56 @@ router.get('/', async (req, res) => {
   });
 });
 
+router.get('/quiz', async (req, res) => {
+  const { difficulty } = req.query;
+  const where = difficulty ? { difficulty: String(difficulty) } : {};
+  
+  const questions = await prisma.question.findMany({ 
+    where,
+    include: { user: true }
+  });
+
+  const shuffled = questions.sort(() => 0.5 - Math.random());
+  const selected = shuffled.slice(0, 10);
+  
+  res.json(selected.map(q => ({
+    ...q,
+    userName: q.user?.name || null,
+    user: undefined
+  })));
+});
+
 router.get('/:qId', async (req, res) => {
   const id = parseInt(req.params.qId);
   const question = await prisma.question.findUnique({
     where: { id: id },
-    include: { 
-      user: true,
-      attempts: { where: { userId: req.user.userId } }
-    }
+    include: { user: true }
   });
   
   if (!question) {
     throw new NotFoundError("Question not found");
   }
-  res.json(formatQuestion(question));
+  
+  res.json({
+    ...question,
+    userName: question.user?.name || null,
+    user: undefined
+  });
 });
 
-router.post('/', upload.single("image"), async (req, res) => {
-  const data = QuestionInput.parse(req.body);
+router.post('/', authenticate, upload.single("image"), async (req, res) => {
+  if (req.user.role === 'player') {
+    throw new ForbiddenError("Players cannot create questions");
+  }
 
+  const data = QuestionInput.parse(req.body);
   const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
   const newQuestion = await prisma.question.create({
     data: {
       question: data.question,
       answer: data.answer,
+      difficulty: data.difficulty,
       imageUrl: imageUrl,
       userId: req.user.userId 
     }
@@ -115,13 +134,14 @@ router.post('/', upload.single("image"), async (req, res) => {
   res.status(201).json(newQuestion);
 });
 
-router.put('/:qId', isOwner, upload.single("image"), async (req, res) => {
+router.put('/:qId', authenticate, isOwner, upload.single("image"), async (req, res) => {
   const id = parseInt(req.params.qId);
   const data = QuestionUpdateInput.parse(req.body);
   
   const updateData = {};
   if (data.question) updateData.question = data.question;
   if (data.answer) updateData.answer = data.answer;
+  if (data.difficulty) updateData.difficulty = data.difficulty;
   if (req.file) updateData.imageUrl = `/uploads/${req.file.filename}`; 
   
   try {
@@ -138,7 +158,7 @@ router.put('/:qId', isOwner, upload.single("image"), async (req, res) => {
   }
 });
 
-router.delete('/:qId', isOwner, async (req, res) => {
+router.delete('/:qId', authenticate, isOwner, async (req, res) => {
   const id = parseInt(req.params.qId);
   
   try {
@@ -154,7 +174,7 @@ router.delete('/:qId', isOwner, async (req, res) => {
   }
 });
 
-router.post('/:qId/play', async (req, res) => {
+router.post('/:qId/play', authenticate, async (req, res) => {
   const questionId = parseInt(req.params.qId);
   const data = PlayInput.parse(req.body);
 
